@@ -30,8 +30,9 @@ class GatewayActorConfig:
         apply_chat_template_kwargs: Default kwargs passed to chat-template rendering.
         mm_processor_kwargs: Static multimodal processor kwargs used by the
             Continuous Token builder.
-        allowed_request_sampling_param_keys: Request sampling keys accepted by the
-            provider adapters when merging payload sampling params.
+        allowed_request_sampling_param_keys: Extra request sampling keys accepted by
+            provider adapters in addition to the default max_tokens and stop.
+            None or an empty set keeps those defaults; this setting cannot remove them.
         vision_info_extractor: Optional async extractor for image/video inputs.
         vision_info_extractor_kwargs: Static kwargs forwarded to the extractor.
         prompt_length: Optional prompt component of the total trajectory capacity.
@@ -45,6 +46,10 @@ class GatewayActorConfig:
         kv_cache_offload_lease_seconds: Lifetime assigned to each refreshed hint.
         kv_cache_offload_priority: Priority for requests without tools.
         kv_cache_offload_tool_priority: Priority for requests with tools available.
+        coalesce_reserved_exact_requests: Whether exact provider-normalized
+            requests in the same session share an in-flight result, including
+            first-turn and new-chain requests. Enabled by default; disable for
+            independent concurrent sampling of identical requests.
     """
 
     tokenizer: Any
@@ -66,6 +71,7 @@ class GatewayActorConfig:
     kv_cache_offload_lease_seconds: float = 300.0
     kv_cache_offload_priority: int = 50
     kv_cache_offload_tool_priority: int = 90
+    coalesce_reserved_exact_requests: bool = True
 
     def __post_init__(self) -> None:
         if type(self.enable_tool_parser_cache) is not bool:
@@ -93,6 +99,11 @@ class GatewayActorConfig:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
                 raise ValueError(f"{name} must be an integer between 0 and 100")
+        if type(self.coalesce_reserved_exact_requests) is not bool:
+            raise ValueError(
+                "coalesce_reserved_exact_requests must be a bool, "
+                f"got {type(self.coalesce_reserved_exact_requests).__name__}"
+            )
         if self.prompt_length is not None and self.prompt_length <= 0:
             raise ValueError(f"prompt_length must be positive when set, got {self.prompt_length}")
         if self.response_length is not None and self.response_length <= 0:

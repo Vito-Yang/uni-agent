@@ -42,6 +42,14 @@ def build_gateway_manager(*, config, llm_client) -> GatewayManager:
     
     kv_cfg = af_cfg.get("kv_cache_offload") or {}
     
+    allowed_sampling_keys = af_cfg.get("allowed_request_sampling_param_keys")
+    if allowed_sampling_keys is not None:
+        if not isinstance(allowed_sampling_keys, list | tuple) and not OmegaConf.is_list(allowed_sampling_keys):
+            raise ValueError("allowed_request_sampling_param_keys must be a list of strings or null")
+        if any(not isinstance(key, str) for key in allowed_sampling_keys):
+            raise ValueError("allowed_request_sampling_param_keys must be a list of strings or null")
+        allowed_sampling_keys = set(allowed_sampling_keys)
+
     # Match AgentLoopWorker pattern: self-load tokenizer/processor via HFModelConfig.
     rollout_config: RolloutConfig = omega_conf_to_dataclass(rollout_cfg)
     model_config: HFModelConfig = omega_conf_to_dataclass(model_cfg)
@@ -62,6 +70,8 @@ def build_gateway_manager(*, config, llm_client) -> GatewayManager:
         kv_cache_offload_lease_seconds=float(kv_cfg.get("active_lease_seconds", 300.0)),
         kv_cache_offload_priority=int(kv_cfg.get("priority", 50)),
         kv_cache_offload_tool_priority=int(kv_cfg.get("tool_priority", 90)),
+        allowed_request_sampling_param_keys=allowed_sampling_keys,
+        coalesce_reserved_exact_requests=af_cfg.get("coalesce_reserved_exact_requests", True),
     )
 
     return GatewayManager(

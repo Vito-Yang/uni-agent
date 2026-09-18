@@ -38,9 +38,9 @@ from uni_agent.gateway.session import (
 from verl.utils.net_utils import is_valid_ipv6_address
 from verl.workers.rollout.utils import run_uvicorn
 
-DEFAULT_ALLOWED_REQUEST_SAMPLING_KEYS = frozenset({"temperature", "top_p", "top_k", "max_tokens", "stop"})
+DEFAULT_ALLOWED_REQUEST_SAMPLING_KEYS = frozenset({"max_tokens", "stop"})
 
-logger = logging.getLogger("gateway")
+logger = logging.getLogger(__name__)
 
 
 def _validate_sampling_params(sampling_params: dict[str, Any]) -> None:
@@ -76,11 +76,10 @@ class _GatewayActor:
             apply_chat_template_kwargs=config.apply_chat_template_kwargs,
             mm_processor_kwargs=config.mm_processor_kwargs,
         )
-        self._allowed_request_sampling_param_keys = (
-            DEFAULT_ALLOWED_REQUEST_SAMPLING_KEYS
-            if config.allowed_request_sampling_param_keys is None
-            else frozenset(config.allowed_request_sampling_param_keys)
+        self._allowed_request_sampling_param_keys = frozenset(DEFAULT_ALLOWED_REQUEST_SAMPLING_KEYS).union(
+            config.allowed_request_sampling_param_keys or ()
         )
+        self._warned_discarded_request_sampling_param_keys: set[str] = set()
         self._prompt_length = config.prompt_length
         self._response_length = config.response_length
         self._enable_last_assistant_rollback = config.enable_last_assistant_rollback
@@ -91,6 +90,7 @@ class _GatewayActor:
             "priority": config.kv_cache_offload_priority,
             "tool_priority": config.kv_cache_offload_tool_priority,
         }
+        self._coalesce_reserved_exact_requests = config.coalesce_reserved_exact_requests
         self._sessions: dict[str, GatewaySession] = {}
         self._app = FastAPI()
         self._server_port: int | None = None
@@ -176,6 +176,18 @@ class _GatewayActor:
                 allowed_sampling_keys=self._allowed_request_sampling_param_keys,
             )
             _validate_sampling_params(internal["sampling_params"])
+            discarded_keys = (
+                session.sampling_params.keys()
+                & payload.keys()
+                - self._allowed_request_sampling_param_keys
+                - self._warned_discarded_request_sampling_param_keys
+            )
+            if discarded_keys:
+                logger.warning(
+                    "Ignoring request sampling parameters not enabled by allowed_request_sampling_param_keys: %s",
+                    ", ".join(sorted(discarded_keys)),
+                )
+                self._warned_discarded_request_sampling_param_keys.update(discarded_keys)
         except MalformedRequestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -202,6 +214,18 @@ class _GatewayActor:
                 allowed_sampling_keys=self._allowed_request_sampling_param_keys,
             )
             _validate_sampling_params(internal["sampling_params"])
+            discarded_keys = (
+                session.sampling_params.keys()
+                & payload.keys()
+                - self._allowed_request_sampling_param_keys
+                - self._warned_discarded_request_sampling_param_keys
+            )
+            if discarded_keys:
+                logger.warning(
+                    "Ignoring request sampling parameters not enabled by allowed_request_sampling_param_keys: %s",
+                    ", ".join(sorted(discarded_keys)),
+                )
+                self._warned_discarded_request_sampling_param_keys.update(discarded_keys)
         except MalformedRequestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -254,6 +278,7 @@ class _GatewayActor:
             response_length=self._response_length,
             sampling_params=sampling_params,
             enable_last_assistant_rollback=self._enable_last_assistant_rollback,
+            coalesce_reserved_exact_requests=self._coalesce_reserved_exact_requests,
             metadata=metadata,
             kv_cache_offload_config=self._kv_cache_offload_config,
         )
